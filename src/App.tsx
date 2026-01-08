@@ -16,7 +16,7 @@ function App() {
 
   return (
     <main className="container">
-      <h1>Welcome to nabıyon asdasd Tauri + React selam naber test test</h1>
+      <h1>berkay aslan</h1>
 
       <div className="row">
         <a href="https://vite.dev" target="_blank">
