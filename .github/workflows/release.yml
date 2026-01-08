@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: release
+  cancel-in-progress: true
+
 jobs:
   create-release:
     permissions:
@@ -25,21 +29,76 @@ jobs:
       - name: Get version
         run: echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
 
-      - name: Create release
+      - name: Create or get release
         id: create-release
         uses: actions/github-script@v7
         with:
           script: |
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: `v${process.env.PACKAGE_VERSION}`,
-              name: `Tauri Arayüz v${process.env.PACKAGE_VERSION}`,
-              body: 'Yeni güncelleme yayınlandı!',
-              draft: true,
-              prerelease: false
-            })
-            return data.id
+            const tag = `v${process.env.PACKAGE_VERSION}`;
+            
+            // Önce mevcut release'i kontrol et
+            try {
+              const { data: existingRelease } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag
+              });
+              
+              console.log(`Mevcut release bulundu: ${existingRelease.id}`);
+              
+              // Eğer draft değilse, sil ve yeniden oluştur
+              if (!existingRelease.draft) {
+                console.log('Release draft değil, siliniyor...');
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: existingRelease.id
+                });
+                
+                // Tag'i de sil
+                try {
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `tags/${tag}`
+                  });
+                } catch (e) {
+                  console.log('Tag silinemedi veya zaten yok');
+                }
+                
+                // Yeni release oluştur
+                const { data: newRelease } = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: `Tauri Arayüz ${tag}`,
+                  body: 'Yeni güncelleme yayınlandı!',
+                  draft: true,
+                  prerelease: false
+                });
+                return newRelease.id;
+              }
+              
+              // Draft ise, mevcut release'i kullan
+              return existingRelease.id;
+              
+            } catch (error) {
+              if (error.status === 404) {
+                // Release yok, yeni oluştur
+                console.log('Mevcut release bulunamadı, yeni oluşturuluyor...');
+                const { data } = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: `Tauri Arayüz ${tag}`,
+                  body: 'Yeni güncelleme yayınlandı!',
+                  draft: true,
+                  prerelease: false
+                });
+                return data.id;
+              }
+              throw error;
+            }
 
   build-tauri:
     needs: create-release
